@@ -13,22 +13,43 @@
     overflow:hidden;user-select:none;-webkit-user-select:none;
     -webkit-tap-highlight-color:transparent;
   }
-  h1{color:#B03060;font-size:18px;margin-bottom:6px}
-  #info{color:#A07088;font-size:12px;margin-bottom:8px;height:16px}
+  h1{color:#B03060;font-size:18px;margin-bottom:4px}
+  #name{color:#8B3055;font-size:13px;margin-bottom:4px;font-weight:600;height:16px}
+  #info{color:#A07088;font-size:12px;margin-bottom:6px;height:16px}
   canvas{
     border-radius:16px;
     box-shadow:0 14px 40px rgba(176,48,96,.2);
     cursor:none;touch-action:none;
-    max-width:96vw;max-height:84vh;
+    max-width:96vw;max-height:80vh;
     background:#FBEDF3;
     display:block;
   }
+  #copy{color:#A07088;font-size:11px;margin-top:8px}
+  #ura{
+    position:fixed;inset:0;background:rgba(60,10,35,.8);
+    display:none;align-items:center;justify-content:center;flex-direction:column;
+    color:#fff;z-index:10;text-align:center;padding:20px;
+  }
+  #ura.show{display:flex}
+  #ura h2{font-size:30px;font-weight:400;margin-bottom:18px}
+  #ura button{
+    padding:12px 32px;font-size:15px;border:none;border-radius:30px;
+    background:#E75480;color:#fff;cursor:pointer;font-weight:500;
+  }
+  #ura button:hover{background:#D64471}
 </style>
 </head>
 <body>
 <h1>Стяни трусики</h1>
+<div id="name">—</div>
 <div id="info">Зажми и плавно потяни вниз</div>
 <canvas id="game" width="600" height="640"></canvas>
+<div id="copy">Слава Ясный 2026</div>
+
+<div id="ura">
+  <h2>Ура, я залетела от тебя!</h2>
+  <button id="uraBtn">Ещё раз</button>
+</div>
 
 <script>
 (function(){
@@ -38,6 +59,13 @@ const cvs = document.getElementById('game');
 const ctx = cvs.getContext('2d');
 const W = 600, H = 640, cx = 300;
 const info = document.getElementById('info');
+const nameEl = document.getElementById('name');
+const uraEl = document.getElementById('ura');
+
+// ==================== ИМЕНА ====================
+const NAMES = ['Маша','Оля','Катя','Настя','Лена','Ира','Света','Юля','Даша','Вика'];
+const CITIES = ['с Уралмаша','с Арбата','с Невского','с Тверской','с Патриков',
+                 'с Сокола','с ВДНХ','с Пресни','с Таганки','с Чистых прудов'];
 
 // ==================== ДЕВУШКИ ====================
 const GIRLS = [
@@ -52,8 +80,18 @@ const GIRLS = [
   { SKIN:'#F8E2D2', SKIN_D:'#F0D2BC', LINE:'rgba(200,160,160,.25)',
     PANTY:'#FFFFFF', EDGE:'#FFC8DC', BOW:'#FFB8D0', HAIR:'#8A5A3A' }
 ];
+
 let girlIdx = 0;
 let G = GIRLS[0];
+let SCORE_MAX = 10;
+
+function pickGirl(idx){
+  G = GIRLS[idx % GIRLS.length];
+  SCORE_MAX = 6 + ((Math.random()*9)|0);
+  const n = NAMES[(Math.random()*NAMES.length)|0];
+  const c = CITIES[(Math.random()*CITIES.length)|0];
+  nameEl.textContent = n + ' ' + c + ' • макс. ' + SCORE_MAX;
+}
 
 // ==================== ГЕОМЕТРИЯ ====================
 const S = {
@@ -73,14 +111,13 @@ const S = {
 const P = { offset:0, max:120, pulled:false };
 const beltBaseY = 346;
 const ANATOMY_Y = 376;
-const SCORE_MAX = 10;
 
 const stim = { active:false, score:0, glow:0, lastHit:0 };
 let dragging = false, dragStartY = 0, dragStartOffset = 0;
 let lastMoanPull = 0;
 let mouseX = -200, mouseY = -200;
 
-const anim = { mode:'idle', t:0, dur:800, offsetY:0, newIdx:0 };
+const anim = { mode:'idle', t:0, offsetY:0, newIdx:0 };
 
 // ==================== УТИЛИТЫ ====================
 function rr(x,y,w,h,r){
@@ -148,13 +185,6 @@ function drawBreast(x, y, dir){
   ctx.fillStyle='rgba(180,120,110,.22)'; ctx.fill();
 
   const nx = x + dir*4, ny = y - 2;
-  if (stim.glow > 0 && stim.active){
-    const gg = ctx.createRadialGradient(nx, ny, 1, nx, ny, 18);
-    gg.addColorStop(0, 'rgba(255,120,160,'+(0.4*stim.glow)+')');
-    gg.addColorStop(1, 'rgba(255,120,160,0)');
-    ctx.fillStyle = gg;
-    ctx.beginPath(); ctx.arc(nx, ny, 18, 0, Math.PI*2); ctx.fill();
-  }
   ctx.beginPath(); ctx.arc(nx, ny, 4.6, 0, Math.PI*2);
   ctx.fillStyle='#E89AA8'; ctx.fill();
   ctx.strokeStyle='rgba(180,110,120,.5)'; ctx.lineWidth=.8; ctx.stroke();
@@ -185,11 +215,10 @@ function drawTorso(){
   ctx.fillStyle=G.SKIN_D; ctx.fill();
 }
 
-// ==================== ГОЛОВА С ЛИЦОМ ====================
 function drawHead(){
-  const {x,y,rx,ry}=S.head;
+  const x=S.head.x, y=S.head.y, rx=S.head.rx, ry=S.head.ry;
 
-  // волосы (задний план)
+  // волосы
   ctx.beginPath();
   ctx.moveTo(x-rx*1.02, y-6);
   ctx.bezierCurveTo(x-rx*1.18,y-ry*1.35, x+rx*1.18,y-ry*1.35, x+rx*1.02,y-6);
@@ -203,7 +232,7 @@ function drawHead(){
   ctx.closePath();
   ctx.fillStyle=G.HAIR; ctx.fill();
 
-  // овал лица
+  // лицо
   ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);
   ctx.fillStyle=G.SKIN; ctx.fill();
   ctx.strokeStyle=G.LINE; ctx.lineWidth=1; ctx.stroke();
@@ -213,7 +242,7 @@ function drawHead(){
   ctx.beginPath(); ctx.moveTo(x-17,y-4); ctx.quadraticCurveTo(x-11,y-9,x-4,y-6); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(x+5,y-6); ctx.quadraticCurveTo(x+12,y-9,x+18,y-4); ctx.stroke();
 
-  // глаза — белки
+  // глаза
   ctx.fillStyle='#FFFFFF';
   ctx.beginPath(); ctx.ellipse(x-11,y+4,6,4.5,0,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(x+13,y+4,6,4.5,0,0,Math.PI*2); ctx.fill();
@@ -221,11 +250,9 @@ function drawHead(){
   ctx.beginPath(); ctx.ellipse(x-11,y+4,6,4.5,0,0,Math.PI*2); ctx.stroke();
   ctx.beginPath(); ctx.ellipse(x+13,y+4,6,4.5,0,0,Math.PI*2); ctx.stroke();
 
-  // зрачки
   ctx.fillStyle='#3A2418';
   ctx.beginPath(); ctx.arc(x-10,y+5,2.6,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(x+14,y+5,2.6,0,Math.PI*2); ctx.fill();
-  // блики
   ctx.fillStyle='rgba(255,255,255,.85)';
   ctx.beginPath(); ctx.arc(x-11,y+4,1,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(x+13,y+4,1,0,Math.PI*2); ctx.fill();
@@ -239,37 +266,18 @@ function drawHead(){
   ctx.beginPath(); ctx.ellipse(x-17,y+14,7,4.5,0,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(x+19,y+14,7,4.5,0,0,Math.PI*2); ctx.fill();
 
-  // ===== РОТ (точка стимуляции) =====
-  if (stim.glow > 0 && stim.active){
-    const gg = ctx.createRadialGradient(x+1, y+24, 1, x+1, y+24, 20);
-    gg.addColorStop(0, 'rgba(255,120,160,'+(0.5*stim.glow)+')');
-    gg.addColorStop(1, 'rgba(255,120,160,0)');
-    ctx.fillStyle = gg;
-    ctx.beginPath(); ctx.arc(x+1, y+24, 20, 0, Math.PI*2); ctx.fill();
-  }
-
-  // открытый рот — полость
+  // рот
   ctx.beginPath(); ctx.ellipse(x+1, y+24, 7, 6, 0, 0, Math.PI*2);
   ctx.fillStyle='#7A2E3E'; ctx.fill();
   ctx.strokeStyle='rgba(120,50,60,.7)'; ctx.lineWidth=1; ctx.stroke();
-
-  // язык
   ctx.beginPath(); ctx.ellipse(x+1, y+26, 5, 3, 0, 0, Math.PI*2);
   ctx.fillStyle='#F08098'; ctx.fill();
-
-  // нижняя губа
   ctx.beginPath();
-  ctx.moveTo(x-7, y+27);
-  ctx.quadraticCurveTo(x+1, y+32, x+9, y+27);
-  ctx.strokeStyle='rgba(200,100,120,.85)'; ctx.lineWidth=2; ctx.lineCap='round';
-  ctx.stroke();
-
-  // верхняя губа
+  ctx.moveTo(x-7, y+27); ctx.quadraticCurveTo(x+1, y+32, x+9, y+27);
+  ctx.strokeStyle='rgba(200,100,120,.85)'; ctx.lineWidth=2; ctx.lineCap='round'; ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(x-7, y+21);
-  ctx.quadraticCurveTo(x+1, y+18, x+9, y+21);
-  ctx.strokeStyle='rgba(200,100,120,.7)'; ctx.lineWidth=1.6;
-  ctx.stroke();
+  ctx.moveTo(x-7, y+21); ctx.quadraticCurveTo(x+1, y+18, x+9, y+21);
+  ctx.strokeStyle='rgba(200,100,120,.7)'; ctx.lineWidth=1.6; ctx.stroke();
 }
 
 function drawFoot(ank, toe, dir){
@@ -317,13 +325,6 @@ function drawAnatomy(){
   ctx.beginPath(); ctx.ellipse(cx+4, ANATOMY_Y+4, 7, 12, -0.08, 0, Math.PI*2); ctx.fill();
 
   const r = 3 * (1 + stim.glow * 0.6);
-  if (stim.glow > 0){
-    const gg = ctx.createRadialGradient(cx, ANATOMY_Y-5, 1, cx, ANATOMY_Y-5, 16);
-    gg.addColorStop(0, 'rgba(255,120,160,'+(0.5*stim.glow)+')');
-    gg.addColorStop(1, 'rgba(255,120,160,0)');
-    ctx.fillStyle = gg;
-    ctx.beginPath(); ctx.arc(cx, ANATOMY_Y-5, 16, 0, Math.PI*2); ctx.fill();
-  }
   ctx.beginPath(); ctx.arc(cx, ANATOMY_Y-5, r, 0, Math.PI*2);
   ctx.fillStyle='rgba(210,130,145,.85)'; ctx.fill();
 }
@@ -352,7 +353,6 @@ function drawPanties(){
   drawBow(midX, beltY+9);
 }
 
-// ==================== КУРСОР-ЧЛЕН ====================
 function drawDick(x, y){
   ctx.save();
   ctx.translate(x, y);
@@ -367,23 +367,12 @@ function drawDick(x, y){
   ctx.beginPath(); ctx.ellipse(0, -6, 8, 18, 0, 0, Math.PI*2); ctx.fill();
   ctx.strokeStyle = 'rgba(140,90,70,.7)'; ctx.lineWidth = 1.4; ctx.stroke();
 
-  ctx.strokeStyle = 'rgba(180,120,90,.35)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(0, 8); ctx.stroke();
-
   ctx.fillStyle = '#D98A8A';
-  ctx.strokeStyle = 'rgba(140,90,70,.7)'; ctx.lineWidth = 1.4;
   ctx.beginPath(); ctx.ellipse(0, -22, 8.5, 7.5, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(160,90,90,.55)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(-7, -18); ctx.quadraticCurveTo(0, -15, 7, -18); ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(140,70,70,.6)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(-2, -25); ctx.lineTo(2, -25); ctx.stroke();
 
   ctx.restore();
 }
 
-// ==================== СТАКАН ====================
 function drawGlass(){
   const gx = 510, gy = 20, gw = 60, gh = 200;
   ctx.fillStyle = 'rgba(255,255,255,.85)';
@@ -441,7 +430,7 @@ function playPullMoan(intensity){
   const now = actx.currentTime;
   if (now - lastMoan < 0.35) return;
   lastMoan = now;
-  tone(220 + Math.random()*50, 60 + intensity*100, 0.35 + intensity*0.25, 0.06 + intensity*0.05);
+  tone(220 + Math.random()*50, 60 + intensity*100, 0.35, 0.08);
 }
 
 function playLickMoan(progress){
@@ -449,8 +438,7 @@ function playLickMoan(progress){
   const now = actx.currentTime;
   if (now - lastMoan < 0.25) return;
   lastMoan = now;
-  const base = 280 + progress * 200;
-  tone(base, 100 + progress*150, 0.3 + progress*0.3, 0.08 + progress*0.08);
+  tone(280 + progress*200, 100 + progress*150, 0.3, 0.1);
 }
 
 function playPleasure(){
@@ -466,36 +454,34 @@ function isOnClit(x, y){
   const dx = x - cx, dy = y - (ANATOMY_Y - 5);
   return dx*dx + dy*dy < 24*24;
 }
-
 function isOnNipple(x, y){
   const dx1 = x - (S.chestL.x - 4), dy1 = y - (S.chestL.y + 2);
   if (dx1*dx1 + dy1*dy1 < 24*24) return true;
   const dx2 = x - (S.chestR.x + 4), dy2 = y - (S.chestR.y + 2);
   return dx2*dx2 + dy2*dy2 < 24*24;
 }
-
 function isOnMouth(x, y){
-  const dx = x - (S.head.x + 1);
-  const dy = y - (S.head.y + 24);
+  const dx = x - (S.head.x + 1), dy = y - (S.head.y + 24);
   return dx*dx + dy*dy < 22*22;
 }
 
 // ==================== ЛОГИКА ====================
-function startFlight(){
+function startFlight(onClit){
   anim.mode = 'flyaway';
   anim.t = 0;
   anim.newIdx = (girlIdx + 1) % GIRLS.length;
   playPleasure();
+  if (onClit) setTimeout(function(){ uraEl.classList.add('show'); }, 900);
 }
 
-function scoreHit(){
+function scoreHit(target){
   const now = performance.now();
   if (now - stim.lastHit < 400) return;
   stim.lastHit = now;
   stim.score++;
   stim.glow = 1;
   playLickMoan(stim.score / SCORE_MAX);
-  if (stim.score >= SCORE_MAX) startFlight();
+  if (stim.score >= SCORE_MAX) startFlight(target === 'clit');
 }
 
 function update(dt){
@@ -503,13 +489,13 @@ function update(dt){
 
   if (anim.mode === 'flyaway'){
     anim.t += dt;
-    const p = Math.min(1, anim.t / anim.dur);
+    const p = Math.min(1, anim.t / 800);
     anim.offsetY = -p * 900;
     if (p >= 1){
       anim.mode = 'arrive';
       anim.t = 0;
       girlIdx = anim.newIdx;
-      G = GIRLS[girlIdx];
+      pickGirl(girlIdx);
       P.offset = 0; P.pulled = false;
       stim.active = false; stim.score = 0; stim.glow = 0;
       anim.offsetY = 900;
@@ -517,7 +503,7 @@ function update(dt){
     }
   } else if (anim.mode === 'arrive'){
     anim.t += dt;
-    const p = Math.min(1, anim.t / anim.dur);
+    const p = Math.min(1, anim.t / 800);
     anim.offsetY = (1 - p) * 900;
     if (p >= 1){ anim.mode = 'idle'; anim.offsetY = 0; }
   }
@@ -568,10 +554,9 @@ function onDown(e){
   mouseX = pos.x; mouseY = pos.y;
 
   if (P.pulled && anim.mode === 'idle'){
-    if (isOnClit(pos.x, pos.y) || isOnNipple(pos.x, pos.y) || isOnMouth(pos.x, pos.y)){
-      scoreHit();
-      return;
-    }
+    if (isOnClit(pos.x, pos.y)){ scoreHit('clit'); return; }
+    if (isOnNipple(pos.x, pos.y)){ scoreHit('nipple'); return; }
+    if (isOnMouth(pos.x, pos.y)){ scoreHit('mouth'); return; }
   }
   dragging = true;
   dragStartY = pos.y;
@@ -616,6 +601,12 @@ cvs.addEventListener('touchstart', onDown, {passive:false});
 window.addEventListener('touchmove', onMove, {passive:false});
 window.addEventListener('touchend', onUp);
 
+document.getElementById('uraBtn').addEventListener('click', function(){
+  uraEl.classList.remove('show');
+});
+
+// ==================== СТАРТ ====================
+pickGirl(0);
 requestAnimationFrame(loop);
 
 })();
