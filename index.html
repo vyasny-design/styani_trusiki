@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Стяни трусики</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:#EFCEDC;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    min-height:100vh;font-family:Arial,sans-serif;
+    overflow:hidden;user-select:none;-webkit-user-select:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+  h1{color:#B03060;font-size:18px;margin-bottom:6px}
+  #info{color:#A07088;font-size:12px;margin-bottom:8px;height:16px}
+  canvas{
+    border-radius:16px;
+    box-shadow:0 14px 40px rgba(176,48,96,.2);
+    cursor:none;touch-action:none;
+    max-width:96vw;max-height:84vh;
+    background:#FBEDF3;
+    display:block;
+  }
+</style>
+</head>
+<body>
+<h1>Стяни трусики</h1>
+<div id="info">Зажми и плавно потяни вниз</div>
+<canvas id="game" width="600" height="640"></canvas>
+
+<script>
+(function(){
+'use strict';
+
+const cvs = document.getElementById('game');
+const ctx = cvs.getContext('2d');
+const W = 600, H = 640, cx = 300;
+const info = document.getElementById('info');
+
+// ==================== ДЕВУШКИ ====================
+const GIRLS = [
+  { SKIN:'#F2CDA9', SKIN_D:'#E5B48E', LINE:'rgba(180,130,140,.28)',
+    PANTY:'#FFFFFF', EDGE:'#FFB4CD', BOW:'#FFA8C5', HAIR:'#5A3A28' },
+  { SKIN:'#D9A574', SKIN_D:'#B57A4E', LINE:'rgba(120,80,70,.3)',
+    PANTY:'#FFF0F5', EDGE:'#FF96BE', BOW:'#FF8FB0', HAIR:'#2A1810' },
+  { SKIN:'#8C5A34', SKIN_D:'#6E4526', LINE:'rgba(50,25,20,.35)',
+    PANTY:'#FFE6F0', EDGE:'#FF78AA', BOW:'#E75480', HAIR:'#1A0E08' },
+  { SKIN:'#E0BE8E', SKIN_D:'#C29A6B', LINE:'rgba(140,100,70,.3)',
+    PANTY:'#FFFAFA', EDGE:'#FFAAC8', BOW:'#FFA8C5', HAIR:'#3A2418' },
+  { SKIN:'#F8E2D2', SKIN_D:'#F0D2BC', LINE:'rgba(200,160,160,.25)',
+    PANTY:'#FFFFFF', EDGE:'#FFC8DC', BOW:'#FFB8D0', HAIR:'#8A5A3A' }
+];
+let girlIdx = 0;
+let G = GIRLS[0];
+
+// ==================== ГЕОМЕТРИЯ ====================
+const S = {
+  head:{x:302,y:82,rx:28,ry:36},
+  neck:{x:300,y:135},
+  shL:{x:254,y:165}, shR:{x:350,y:160},
+  chestL:{x:262,y:220}, chestR:{x:342,y:215},
+  waistL:{x:274,y:295}, waistR:{x:330,y:292},
+  hipL:{x:248,y:360}, hipR:{x:356,y:355},
+  thighL:{x:250,y:410}, kneeL:{x:254,y:480},
+  ankL:{x:260,y:590}, footL:{x:236,y:605},
+  thighR:{x:362,y:405}, kneeR:{x:366,y:475},
+  ankR:{x:378,y:585}, footR:{x:412,y:600}
+};
+
+// ==================== СОСТОЯНИЕ ====================
+const P = { offset:0, max:120, pulled:false };
+const beltBaseY = 346;
+const ANATOMY_Y = 376;
+const SCORE_MAX = 10;
+
+const stim = { active:false, score:0, glow:0, lastHit:0 };
+let dragging = false, dragStartY = 0, dragStartOffset = 0;
+let lastMoanPull = 0;
+let mouseX = -200, mouseY = -200;
+
+const anim = { mode:'idle', t:0, dur:800, offsetY:0, newIdx:0 };
+
+// ==================== УТИЛИТЫ ====================
+function rr(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+function legPointAt(a,b,c,y){
+  if (y < a.y) return {x:a.x,y};
+  if (y > c.y) return {x:c.x,y:c.y};
+  if (y <= b.y){
+    const t = (y-a.y)/((b.y-a.y)||1);
+    return {x:a.x+(b.x-a.x)*t, y};
+  }
+  const t = (y-b.y)/((c.y-b.y)||1);
+  return {x:b.x+(c.x-b.x)*t, y};
+}
+
+// ==================== РИСОВАНИЕ ====================
+function limb(pts, ws, fill){
+  const n = pts.length, nrm = [];
+  for (let i=0;i<n;i++){
+    const p=pts[i], a=pts[Math.max(0,i-1)], b=pts[Math.min(n-1,i+1)];
+    let dx=b.x-a.x, dy=b.y-a.y;
+    const l=Math.hypot(dx,dy)||1; dx/=l; dy/=l;
+    nrm.push({x:-dy,y:dx});
+  }
+  ctx.beginPath();
+  for (let i=0;i<n;i++){
+    const p=pts[i], nr=nrm[i], w=ws[i]/2;
+    const X=p.x+nr.x*w, Y=p.y+nr.y*w;
+    if(i===0) ctx.moveTo(X,Y);
+    else{
+      const pp=pts[i-1], pn=nrm[i-1], pw=ws[i-1]/2;
+      ctx.quadraticCurveTo(pp.x+pn.x*pw, pp.y+pn.y*pw, (pp.x+pn.x*pw+X)/2, (pp.y+pn.y*pw+Y)/2);
+    }
+  }
+  for (let i=n-1;i>=0;i--){
+    const p=pts[i], nr=nrm[i], w=ws[i]/2;
+    const X=p.x-nr.x*w, Y=p.y-nr.y*w;
+    if(i===n-1) ctx.lineTo(X,Y);
+    else{
+      const pp=pts[i+1], pn=nrm[i+1], pw=ws[i+1]/2;
+      ctx.quadraticCurveTo(pp.x-pn.x*pw, pp.y-pn.y*pw, (pp.x-pn.x*pw+X)/2, (pp.y-pn.y*pw+Y)/2);
+    }
+  }
+  ctx.closePath();
+  ctx.fillStyle=fill; ctx.fill();
+  ctx.strokeStyle=G.LINE; ctx.lineWidth=1; ctx.stroke();
+}
+
+function drawBreast(x, y, dir){
+  ctx.beginPath();
+  ctx.ellipse(x, y, 22, 20, dir*0.1, 0, Math.PI*2);
+  ctx.fillStyle = G.SKIN; ctx.fill();
+  ctx.strokeStyle = G.LINE; ctx.lineWidth = 1; ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(x, y+18, 18, 6, 0, 0, Math.PI*2);
+  ctx.fillStyle='rgba(180,120,110,.22)'; ctx.fill();
+
+  const nx = x + dir*4, ny = y - 2;
+  if (stim.glow > 0 && stim.active){
+    const gg = ctx.createRadialGradient(nx, ny, 1, nx, ny, 18);
+    gg.addColorStop(0, 'rgba(255,120,160,'+(0.4*stim.glow)+')');
+    gg.addColorStop(1, 'rgba(255,120,160,0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath(); ctx.arc(nx, ny, 18, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.beginPath(); ctx.arc(nx, ny, 4.6, 0, Math.PI*2);
+  ctx.fillStyle='#E89AA8'; ctx.fill();
+  ctx.strokeStyle='rgba(180,110,120,.5)'; ctx.lineWidth=.8; ctx.stroke();
+}
+
+function drawTorso(){
+  ctx.beginPath();
+  ctx.moveTo(S.shL.x, S.shL.y);
+  ctx.bezierCurveTo(S.chestL.x,S.chestL.y, S.waistL.x,S.waistL.y, S.hipL.x,S.hipL.y);
+  ctx.bezierCurveTo(cx-26,S.hipL.y+40, cx+28,S.hipR.y+38, S.hipR.x,S.hipR.y);
+  ctx.bezierCurveTo(S.waistR.x,S.waistR.y, S.chestR.x,S.chestR.y, S.shR.x,S.shR.y);
+  ctx.quadraticCurveTo(cx+14,S.shR.y-18, S.neck.x+11,S.neck.y);
+  ctx.quadraticCurveTo(S.neck.x,S.neck.y-10, S.neck.x-11,S.neck.y);
+  ctx.quadraticCurveTo(cx-22,S.shL.y-18, S.shL.x,S.shL.y);
+  ctx.closePath();
+  ctx.fillStyle=G.SKIN; ctx.fill();
+  ctx.strokeStyle=G.LINE; ctx.lineWidth=1; ctx.stroke();
+
+  drawBreast(S.chestL.x, S.chestL.y+4, -1);
+  drawBreast(S.chestR.x, S.chestR.y+4,  1);
+
+  ctx.beginPath();
+  ctx.moveTo(S.neck.x-10,S.neck.y-4);
+  ctx.lineTo(S.neck.x-12,S.neck.y+22);
+  ctx.lineTo(S.neck.x+12,S.neck.y+22);
+  ctx.lineTo(S.neck.x+10,S.neck.y-4);
+  ctx.closePath();
+  ctx.fillStyle=G.SKIN_D; ctx.fill();
+}
+
+// ==================== ГОЛОВА С ЛИЦОМ ====================
+function drawHead(){
+  const {x,y,rx,ry}=S.head;
+
+  // волосы (задний план)
+  ctx.beginPath();
+  ctx.moveTo(x-rx*1.02, y-6);
+  ctx.bezierCurveTo(x-rx*1.18,y-ry*1.35, x+rx*1.18,y-ry*1.35, x+rx*1.02,y-6);
+  ctx.bezierCurveTo(x+rx*1.12,y+40, x+rx*1.15,y+95, x+rx*.72,y+130);
+  ctx.quadraticCurveTo(x+24,y+142, x+12,y+116);
+  ctx.quadraticCurveTo(x+18,y+78, x+22,y+40);
+  ctx.lineTo(x-22,y+40);
+  ctx.quadraticCurveTo(x-18,y+78, x-12,y+116);
+  ctx.quadraticCurveTo(x-24,y+142, x-rx*.72,y+130);
+  ctx.bezierCurveTo(x-rx*1.15,y+95, x-rx*1.12,y+40, x-rx*1.02,y-6);
+  ctx.closePath();
+  ctx.fillStyle=G.HAIR; ctx.fill();
+
+  // овал лица
+  ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);
+  ctx.fillStyle=G.SKIN; ctx.fill();
+  ctx.strokeStyle=G.LINE; ctx.lineWidth=1; ctx.stroke();
+
+  // брови
+  ctx.strokeStyle='rgba(60,35,25,.7)'; ctx.lineWidth=1.6; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(x-17,y-4); ctx.quadraticCurveTo(x-11,y-9,x-4,y-6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x+5,y-6); ctx.quadraticCurveTo(x+12,y-9,x+18,y-4); ctx.stroke();
+
+  // глаза — белки
+  ctx.fillStyle='#FFFFFF';
+  ctx.beginPath(); ctx.ellipse(x-11,y+4,6,4.5,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x+13,y+4,6,4.5,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(80,50,40,.4)'; ctx.lineWidth=.8;
+  ctx.beginPath(); ctx.ellipse(x-11,y+4,6,4.5,0,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(x+13,y+4,6,4.5,0,0,Math.PI*2); ctx.stroke();
+
+  // зрачки
+  ctx.fillStyle='#3A2418';
+  ctx.beginPath(); ctx.arc(x-10,y+5,2.6,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+14,y+5,2.6,0,Math.PI*2); ctx.fill();
+  // блики
+  ctx.fillStyle='rgba(255,255,255,.85)';
+  ctx.beginPath(); ctx.arc(x-11,y+4,1,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+13,y+4,1,0,Math.PI*2); ctx.fill();
+
+  // нос
+  ctx.strokeStyle='rgba(180,120,100,.6)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(x+1,y+8); ctx.quadraticCurveTo(x+2,y+13,x-1,y+14); ctx.stroke();
+
+  // румянец
+  ctx.fillStyle='rgba(240,150,170,.35)';
+  ctx.beginPath(); ctx.ellipse(x-17,y+14,7,4.5,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x+19,y+14,7,4.5,0,0,Math.PI*2); ctx.fill();
+
+  // ===== РОТ (точка стимуляции) =====
+  if (stim.glow > 0 && stim.active){
+    const gg = ctx.createRadialGradient(x+1, y+24, 1, x+1, y+24, 20);
+    gg.addColorStop(0, 'rgba(255,120,160,'+(0.5*stim.glow)+')');
+    gg.addColorStop(1, 'rgba(255,120,160,0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath(); ctx.arc(x+1, y+24, 20, 0, Math.PI*2); ctx.fill();
+  }
+
+  // открытый рот — полость
+  ctx.beginPath(); ctx.ellipse(x+1, y+24, 7, 6, 0, 0, Math.PI*2);
+  ctx.fillStyle='#7A2E3E'; ctx.fill();
+  ctx.strokeStyle='rgba(120,50,60,.7)'; ctx.lineWidth=1; ctx.stroke();
+
+  // язык
+  ctx.beginPath(); ctx.ellipse(x+1, y+26, 5, 3, 0, 0, Math.PI*2);
+  ctx.fillStyle='#F08098'; ctx.fill();
+
+  // нижняя губа
+  ctx.beginPath();
+  ctx.moveTo(x-7, y+27);
+  ctx.quadraticCurveTo(x+1, y+32, x+9, y+27);
+  ctx.strokeStyle='rgba(200,100,120,.85)'; ctx.lineWidth=2; ctx.lineCap='round';
+  ctx.stroke();
+
+  // верхняя губа
+  ctx.beginPath();
+  ctx.moveTo(x-7, y+21);
+  ctx.quadraticCurveTo(x+1, y+18, x+9, y+21);
+  ctx.strokeStyle='rgba(200,100,120,.7)'; ctx.lineWidth=1.6;
+  ctx.stroke();
+}
+
+function drawFoot(ank, toe, dir){
+  ctx.beginPath();
+  ctx.moveTo(ank.x-9, ank.y);
+  ctx.quadraticCurveTo(ank.x+dir*6, ank.y+10, toe.x+dir*3, toe.y+2);
+  ctx.quadraticCurveTo(toe.x, toe.y+8, toe.x-dir*18, toe.y+6);
+  ctx.quadraticCurveTo(ank.x-dir*18, toe.y-2, ank.x-9, ank.y);
+  ctx.closePath();
+  ctx.fillStyle=G.SKIN; ctx.fill();
+  ctx.strokeStyle=G.LINE; ctx.lineWidth=1; ctx.stroke();
+}
+
+function drawLegs(){
+  limb([{x:S.hipL.x,y:S.hipL.y+6}, S.thighL, S.kneeL, S.ankL],[46,40,26,14], G.SKIN);
+  drawFoot(S.ankL, S.footL, -1);
+  limb([{x:S.hipR.x,y:S.hipR.y+6}, S.thighR, S.kneeR, S.ankR],[46,40,26,14], G.SKIN);
+  drawFoot(S.ankR, S.footR, 1);
+}
+
+function drawBow(x,y){
+  ctx.save(); ctx.translate(x,y);
+  const s=8;
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.bezierCurveTo(-s,-s*.9,-s*1.5,s*.5,-s*.3,s*.5);
+  ctx.bezierCurveTo(-s*.8,s*.1,-s*.6,-s*.1,0,0);
+  ctx.fillStyle=G.BOW; ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.bezierCurveTo(s,-s*.9,s*1.5,s*.5,s*.3,s*.5);
+  ctx.bezierCurveTo(s*.8,s*.1,s*.6,-s*.1,0,0);
+  ctx.fillStyle=G.BOW; ctx.fill();
+  ctx.beginPath(); ctx.arc(0,0,2.4,0,Math.PI*2);
+  ctx.fillStyle='#E75480'; ctx.fill();
+  ctx.restore();
+}
+
+function drawAnatomy(){
+  ctx.fillStyle='rgba(200,150,150,.35)';
+  ctx.beginPath(); ctx.ellipse(cx, ANATOMY_Y, 20, 12, 0, 0, Math.PI*2); ctx.fill();
+
+  ctx.fillStyle='rgba(200,140,150,.6)';
+  ctx.beginPath(); ctx.ellipse(cx-4, ANATOMY_Y+4, 7, 12, 0.08, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx+4, ANATOMY_Y+4, 7, 12, -0.08, 0, Math.PI*2); ctx.fill();
+
+  const r = 3 * (1 + stim.glow * 0.6);
+  if (stim.glow > 0){
+    const gg = ctx.createRadialGradient(cx, ANATOMY_Y-5, 1, cx, ANATOMY_Y-5, 16);
+    gg.addColorStop(0, 'rgba(255,120,160,'+(0.5*stim.glow)+')');
+    gg.addColorStop(1, 'rgba(255,120,160,0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath(); ctx.arc(cx, ANATOMY_Y-5, 16, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.beginPath(); ctx.arc(cx, ANATOMY_Y-5, r, 0, Math.PI*2);
+  ctx.fillStyle='rgba(210,130,145,.85)'; ctx.fill();
+}
+
+function drawPanties(){
+  const beltY = beltBaseY + P.offset;
+  const L = legPointAt(S.hipL, S.thighL, S.ankL, beltY);
+  const R = legPointAt(S.hipR, S.thighR, S.ankR, beltY);
+  const midX = (L.x+R.x)/2;
+  const crotchY = beltY + 30;
+  const openY = beltY + 20;
+
+  if (P.offset / P.max > 0.3) drawAnatomy();
+
+  ctx.beginPath();
+  ctx.moveTo(L.x, beltY);
+  ctx.quadraticCurveTo(midX, beltY+7, R.x, beltY);
+  ctx.bezierCurveTo(R.x+5, beltY+12, R.x+7, openY-4, R.x-7, openY+12);
+  ctx.bezierCurveTo(R.x-22, crotchY-2, midX+20, crotchY, midX, crotchY);
+  ctx.bezierCurveTo(midX-20, crotchY, L.x+22, crotchY-2, L.x+7, openY+12);
+  ctx.bezierCurveTo(L.x-7, openY-4, L.x-5, beltY+12, L.x, beltY);
+  ctx.closePath();
+  ctx.fillStyle=G.PANTY; ctx.fill();
+  ctx.strokeStyle=G.EDGE; ctx.lineWidth=1.5; ctx.stroke();
+
+  drawBow(midX, beltY+9);
+}
+
+// ==================== КУРСОР-ЧЛЕН ====================
+function drawDick(x, y){
+  ctx.save();
+  ctx.translate(x, y);
+
+  ctx.fillStyle = '#C9906A';
+  ctx.strokeStyle = 'rgba(120,70,50,.6)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.ellipse(-9, 14, 7, 9, -0.15, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(9, 14, 7, 9, 0.15, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = '#E8B48C';
+  ctx.beginPath(); ctx.ellipse(0, -6, 8, 18, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = 'rgba(140,90,70,.7)'; ctx.lineWidth = 1.4; ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(180,120,90,.35)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(0, 8); ctx.stroke();
+
+  ctx.fillStyle = '#D98A8A';
+  ctx.strokeStyle = 'rgba(140,90,70,.7)'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.ellipse(0, -22, 8.5, 7.5, 0, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(160,90,90,.55)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-7, -18); ctx.quadraticCurveTo(0, -15, 7, -18); ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(140,70,70,.6)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-2, -25); ctx.lineTo(2, -25); ctx.stroke();
+
+  ctx.restore();
+}
+
+// ==================== СТАКАН ====================
+function drawGlass(){
+  const gx = 510, gy = 20, gw = 60, gh = 200;
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.strokeStyle = 'rgba(231,84,128,.5)';
+  ctx.lineWidth = 2;
+  rr(gx, gy, gw, gh, 12); ctx.fill(); ctx.stroke();
+
+  const fill = stim.score / SCORE_MAX;
+  const fh = (gh - 8) * fill;
+  if (fh > 0){
+    ctx.fillStyle = '#E75480';
+    rr(gx+4, gy+gh-fh-4, gw-8, fh, 10); ctx.fill();
+  }
+
+  ctx.fillStyle = '#B03060';
+  ctx.font = '600 12px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Наслаждение', gx+gw/2, gy+gh+18);
+  ctx.font = '700 14px Arial';
+  ctx.fillStyle = '#E75480';
+  ctx.fillText(stim.score + ' / ' + SCORE_MAX, gx+gw/2, gy+gh+38);
+  ctx.textAlign = 'left';
+}
+
+// ==================== ЗВУК ====================
+let actx = null, lastMoan = 0, lastPleasure = 0;
+
+function initAudio(){
+  if (!actx){
+    try{
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) actx = new AC();
+    }catch(e){}
+  }
+  if (actx && actx.state === 'suspended') actx.resume();
+}
+
+function tone(f0, f1, dur, peak){
+  if (!actx) return;
+  const now = actx.currentTime;
+  const o = actx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(f0, now);
+  o.frequency.linearRampToValueAtTime(f0+f1, now+dur);
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(peak, now+0.05);
+  g.gain.linearRampToValueAtTime(0, now+dur);
+  o.connect(g); g.connect(actx.destination);
+  o.start(now); o.stop(now+dur+0.1);
+}
+
+function playPullMoan(intensity){
+  if (!actx) return;
+  const now = actx.currentTime;
+  if (now - lastMoan < 0.35) return;
+  lastMoan = now;
+  tone(220 + Math.random()*50, 60 + intensity*100, 0.35 + intensity*0.25, 0.06 + intensity*0.05);
+}
+
+function playLickMoan(progress){
+  if (!actx) return;
+  const now = actx.currentTime;
+  if (now - lastMoan < 0.25) return;
+  lastMoan = now;
+  const base = 280 + progress * 200;
+  tone(base, 100 + progress*150, 0.3 + progress*0.3, 0.08 + progress*0.08);
+}
+
+function playPleasure(){
+  if (!actx) return;
+  const now = actx.currentTime;
+  if (now - lastPleasure < 1) return;
+  lastPleasure = now;
+  tone(350, 400, 1.2, 0.15);
+}
+
+// ==================== ПОПАДАНИЯ ====================
+function isOnClit(x, y){
+  const dx = x - cx, dy = y - (ANATOMY_Y - 5);
+  return dx*dx + dy*dy < 24*24;
+}
+
+function isOnNipple(x, y){
+  const dx1 = x - (S.chestL.x - 4), dy1 = y - (S.chestL.y + 2);
+  if (dx1*dx1 + dy1*dy1 < 24*24) return true;
+  const dx2 = x - (S.chestR.x + 4), dy2 = y - (S.chestR.y + 2);
+  return dx2*dx2 + dy2*dy2 < 24*24;
+}
+
+function isOnMouth(x, y){
+  const dx = x - (S.head.x + 1);
+  const dy = y - (S.head.y + 24);
+  return dx*dx + dy*dy < 22*22;
+}
+
+// ==================== ЛОГИКА ====================
+function startFlight(){
+  anim.mode = 'flyaway';
+  anim.t = 0;
+  anim.newIdx = (girlIdx + 1) % GIRLS.length;
+  playPleasure();
+}
+
+function scoreHit(){
+  const now = performance.now();
+  if (now - stim.lastHit < 400) return;
+  stim.lastHit = now;
+  stim.score++;
+  stim.glow = 1;
+  playLickMoan(stim.score / SCORE_MAX);
+  if (stim.score >= SCORE_MAX) startFlight();
+}
+
+function update(dt){
+  if (stim.glow > 0) stim.glow = Math.max(0, stim.glow - dt*0.0015);
+
+  if (anim.mode === 'flyaway'){
+    anim.t += dt;
+    const p = Math.min(1, anim.t / anim.dur);
+    anim.offsetY = -p * 900;
+    if (p >= 1){
+      anim.mode = 'arrive';
+      anim.t = 0;
+      girlIdx = anim.newIdx;
+      G = GIRLS[girlIdx];
+      P.offset = 0; P.pulled = false;
+      stim.active = false; stim.score = 0; stim.glow = 0;
+      anim.offsetY = 900;
+      info.textContent = 'Зажми и плавно потяни вниз';
+    }
+  } else if (anim.mode === 'arrive'){
+    anim.t += dt;
+    const p = Math.min(1, anim.t / anim.dur);
+    anim.offsetY = (1 - p) * 900;
+    if (p >= 1){ anim.mode = 'idle'; anim.offsetY = 0; }
+  }
+}
+
+function draw(){
+  ctx.fillStyle = '#FBEDF3';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.translate(0, anim.offsetY);
+  drawLegs();
+  drawTorso();
+  drawHead();
+  drawPanties();
+  ctx.restore();
+
+  drawGlass();
+
+  if (mouseX > 0 && mouseX < W && mouseY > 0 && mouseY < H){
+    drawDick(mouseX, mouseY);
+  }
+}
+
+// ==================== ЦИКЛ ====================
+let lastTime = performance.now();
+function loop(now){
+  const dt = Math.min(50, now - lastTime);
+  lastTime = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ==================== СОБЫТИЯ ====================
+function getPos(e){
+  const rect = cvs.getBoundingClientRect();
+  const sx = W / rect.width, sy = H / rect.height;
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return { x:(clientX-rect.left)*sx, y:(clientY-rect.top)*sy };
+}
+
+function onDown(e){
+  e.preventDefault();
+  initAudio();
+  const pos = getPos(e);
+  mouseX = pos.x; mouseY = pos.y;
+
+  if (P.pulled && anim.mode === 'idle'){
+    if (isOnClit(pos.x, pos.y) || isOnNipple(pos.x, pos.y) || isOnMouth(pos.x, pos.y)){
+      scoreHit();
+      return;
+    }
+  }
+  dragging = true;
+  dragStartY = pos.y;
+  dragStartOffset = P.offset;
+}
+
+function onMove(e){
+  const pos = getPos(e);
+  mouseX = pos.x; mouseY = pos.y;
+
+  if (!dragging) return;
+  e.preventDefault();
+  const dy = pos.y - dragStartY;
+  const oldOffset = P.offset;
+  P.offset = Math.max(0, Math.min(P.max, dragStartOffset + dy));
+
+  if (P.offset > oldOffset && !P.pulled){
+    const now = performance.now();
+    if (now - lastMoanPull > 300){
+      lastMoanPull = now;
+      playPullMoan(P.offset / P.max);
+    }
+  }
+
+  if (P.offset >= P.max && !P.pulled){
+    P.pulled = true;
+    stim.active = true;
+    info.textContent = 'Кликни по клитору, соскам или рту';
+  } else if (!P.pulled){
+    info.textContent = 'Стянуто: ' + Math.round(P.offset/P.max*100) + '%';
+  }
+}
+
+function onUp(){
+  dragging = false;
+}
+
+cvs.addEventListener('mousedown', onDown);
+window.addEventListener('mousemove', onMove);
+window.addEventListener('mouseup', onUp);
+cvs.addEventListener('touchstart', onDown, {passive:false});
+window.addEventListener('touchmove', onMove, {passive:false});
+window.addEventListener('touchend', onUp);
+
+requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
